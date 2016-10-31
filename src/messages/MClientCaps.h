@@ -46,6 +46,9 @@ class MClientCaps : public Message {
   uint32_t caller_uid;
   uint32_t caller_gid;
 
+  /* Is this request potentially blocking other activity? */
+  bool sync;
+
   int      get_caps() { return head.caps; }
   int      get_wanted() { return head.wanted; }
   int      get_dirty() { return head.dirty; }
@@ -117,7 +120,8 @@ class MClientCaps : public Message {
       time_warp_seq(0),
       osd_epoch_barrier(0),
       oldest_flush_tid(0),
-      caller_uid(0), caller_gid(0) {
+      caller_uid(0), caller_gid(0),
+      sync(false) {
     inline_version = 0;
   }
   MClientCaps(int op,
@@ -139,7 +143,8 @@ class MClientCaps : public Message {
       time_warp_seq(0),
       osd_epoch_barrier(oeb),
       oldest_flush_tid(0),
-      caller_uid(0), caller_gid(0) {
+      caller_uid(0), caller_gid(0),
+      sync(false) {
     memset(&head, 0, sizeof(head));
     head.op = op;
     head.ino = ino;
@@ -165,7 +170,8 @@ class MClientCaps : public Message {
       time_warp_seq(0),
       osd_epoch_barrier(oeb),
       oldest_flush_tid(0),
-      caller_uid(0), caller_gid(0) {
+      caller_uid(0), caller_gid(0),
+      sync(false) {
     memset(&head, 0, sizeof(head));
     head.op = op;
     head.ino = ino;
@@ -263,6 +269,7 @@ public:
     if (header.version >= 9) {
       ::decode(btime, p);
       ::decode(change_attr, p);
+      ::decode(sync, p);
     }
   }
   void encode_payload(uint64_t features) {
@@ -322,6 +329,7 @@ public:
     ::encode(layout.pool_ns, payload);
     ::encode(btime, payload);
     ::encode(change_attr, payload);
+    ::encode(sync, payload);
   }
 };
 

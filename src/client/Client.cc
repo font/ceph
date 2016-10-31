@@ -3054,7 +3054,7 @@ void Client::put_cap_ref(Inode *in, int cap)
       ++put_nref;
     }
     if (drop)
-      check_caps(in, false);
+      check_caps(in, 0);
     if (put_nref)
       put_inode(in, put_nref);
   }
@@ -3088,7 +3088,7 @@ int Client::get_caps(Inode *in, int need, int want, int *phave, loff_t endoff)
 	  endoff > (loff_t)in->wanted_max_size) {
 	ldout(cct, 10) << "wanted_max_size " << in->wanted_max_size << " -> " << endoff << dendl;
 	in->wanted_max_size = endoff;
-	check_caps(in, false);
+	check_caps(in, 0);
       }
 
       if (endoff >= 0 && endoff > (loff_t)in->max_size) {
@@ -3292,9 +3292,9 @@ void Client::send_cap(Inode *in, MetaSession *session, Cap *cap,
  * revoked caps to the MDS as appropriate.
  *
  * @param in the inode to check
- * @param no_delay whether we should delay sending caps
+ * @param flags flags to apply to cap check
  */
-void Client::check_caps(Inode *in, bool no_delay)
+void Client::check_caps(Inode *in, unsigned flags)
 {
   unsigned wanted = in->caps_wanted();
   unsigned used = get_caps_used(in);
@@ -3324,7 +3324,7 @@ void Client::check_caps(Inode *in, bool no_delay)
 	   << " used " << ccap_string(used)
 	   << " issued " << ccap_string(issued)
 	   << " revoking " << ccap_string(revoking)
-	   << " no_delay=" << no_delay
+	   << " flags=" << flags
 	   << dendl;
 
   if (in->snapid != CEPH_NOSNAP)
@@ -3340,7 +3340,7 @@ void Client::check_caps(Inode *in, bool no_delay)
   if (!in->cap_snaps.empty())
     flush_snaps(in);
 
-  if (no_delay)
+  if (flags & CHECK_CAPS_NODELAY)
     in->hold_caps_until = utime_t();
   else
     cap_delay_requeue(in);
@@ -3859,7 +3859,7 @@ void Client::add_update_cap(Inode *in, MetaSession *mds_session, uint64_t cap_id
       if (it->second == cap)
 	continue;
       if (it->second->implemented & ~it->second->issued & issued) {
-	check_caps(in, true);
+	check_caps(in, CHECK_CAPS_NODELAY);
 	break;
       }
     }
@@ -4120,7 +4120,7 @@ void Client::flush_caps()
     Inode *in = *p;
     ++p;
     delayed_caps.pop_front();
-    check_caps(in, true);
+    check_caps(in, CHECK_CAPS_NODELAY);
   }
 
   // other caps, too
@@ -4128,7 +4128,7 @@ void Client::flush_caps()
   while (!p.end()) {
     Inode *in = *p;
     ++p;
-    check_caps(in, true);
+    check_caps(in, CHECK_CAPS_NODELAY);
   }
 }
 
@@ -4997,7 +4997,7 @@ void Client::handle_cap_grant(MetaSession *session, Inode *in, Cap *cap, MClient
   }
 
   if (check)
-    check_caps(in, false);
+    check_caps(in, 0);
 
   // wake up waiters
   if (new_caps)
@@ -5872,7 +5872,7 @@ void Client::tick()
       break;
     delayed_caps.pop_front();
     cap_list.push_back(&in->cap_item);
-    check_caps(in, true);
+    check_caps(in, CHECK_CAPS_NODELAY);
   }
 
   trim_cache(true);
@@ -7974,7 +7974,7 @@ int Client::_release_fh(Fh *f)
   if (in->snapid == CEPH_NOSNAP) {
     if (in->put_open_ref(f->mode)) {
       _flush(in, new C_Client_FlushComplete(this, in));
-      check_caps(in, false);
+      check_caps(in, 0);
     }
   } else {
     assert(in->snap_cap_refs > 0);
@@ -8023,7 +8023,7 @@ int Client::_open(Inode *in, int flags, mode_t mode, Fh **fhp,
   if ((flags & O_TRUNC) == 0 &&
       in->caps_issued_mask(want)) {
     // update wanted?
-    check_caps(in, true);
+    check_caps(in, CHECK_CAPS_NODELAY);
   } else {
     MetaRequest *req = new MetaRequest(CEPH_MDS_OP_OPEN);
     filepath path;
@@ -8059,7 +8059,7 @@ int Client::_renew_caps(Inode *in)
   int wanted = in->caps_file_wanted();
   if (in->is_any_caps() &&
       ((wanted & CEPH_CAP_ANY_WR) == 0 || in->auth_cap)) {
-    check_caps(in, true);
+    check_caps(in, CHECK_CAPS_NODELAY);
     return 0;
   }
 
@@ -8392,7 +8392,7 @@ done:
       in->inline_data.clear();
       in->inline_version = CEPH_INLINE_NONE;
       mark_caps_dirty(in, CEPH_CAP_FILE_WR);
-      check_caps(in, false);
+      check_caps(in, 0);
     } else
       r = uninline_ret;
   }
@@ -8853,11 +8853,11 @@ success:
     mark_caps_dirty(in, CEPH_CAP_FILE_WR);
 
     if (is_quota_bytes_approaching(in, f->actor_perms)) {
-      check_caps(in, true);
+      check_caps(in, CHECK_CAPS_NODELAY);
     } else {
       if ((in->size << 1) >= in->max_size &&
           (in->reported_size << 1) < in->max_size)
-        check_caps(in, false);
+        check_caps(in, 0);
     }
 
     ldout(cct, 7) << "wrote to " << totalwritten+offset << ", extending file size" << dendl;
@@ -8884,7 +8884,7 @@ done:
       in->inline_data.clear();
       in->inline_version = CEPH_INLINE_NONE;
       mark_caps_dirty(in, CEPH_CAP_FILE_WR);
-      check_caps(in, false);
+      check_caps(in, 0);
     } else
       r = uninline_ret;
   }
@@ -8973,7 +8973,7 @@ int Client::_fsync(Inode *in, bool syncdataonly)
   }
   
   if (!syncdataonly && in->dirty_caps) {
-    check_caps(in, true);
+    check_caps(in, CHECK_CAPS_NODELAY);
     if (in->flushing_caps)
       flush_tid = last_flush_tid;
   } else ldout(cct, 10) << "no metadata needs to commit" << dendl;
@@ -9644,7 +9644,7 @@ int Client::lazyio_synchronize(int fd, loff_t offset, size_t count)
   
   _fsync(f, true);
   if (_release(in))
-    check_caps(in, false);
+    check_caps(in, 0);
   return 0;
 }
 
@@ -12014,11 +12014,11 @@ int Client::_fallocate(Fh *fh, int mode, int64_t offset, int64_t length)
       mark_caps_dirty(in, CEPH_CAP_FILE_WR);
 
       if (is_quota_bytes_approaching(in, fh->actor_perms)) {
-        check_caps(in, true);
+        check_caps(in, CHECK_CAPS_NODELAY);
       } else {
         if ((in->size << 1) >= in->max_size &&
             (in->reported_size << 1) < in->max_size)
-          check_caps(in, false);
+          check_caps(in, 0);
       }
     }
   }
@@ -12035,7 +12035,7 @@ int Client::_fallocate(Fh *fh, int mode, int64_t offset, int64_t length)
       in->inline_data.clear();
       in->inline_version = CEPH_INLINE_NONE;
       mark_caps_dirty(in, CEPH_CAP_FILE_WR);
-      check_caps(in, false);
+      check_caps(in, 0);
     } else
       r = uninline_ret;
   }
